@@ -1,0 +1,861 @@
+#######################################################
+##  First download the Original Data set from KAGGLE ##
+#######################################################
+
+#########################################################
+## Context of the data set:                             ##
+## This data set is created for prediction of Graduate  ##
+## Admissions from an Indian perspective               ##
+##                                                     ##
+## Citation                                            ##
+##                                                     ##
+## Mohan S Acharya, Asfia Armaan, Aneeta S Antony:     ##
+## A Comparison of Regression Models for Prediction    ##
+## of Graduate Admissions, IEEE International          ##
+## Conference on Computational Intelligence in Data    ##
+## Science 2019                                        ##
+##                                                     ##
+#########################################################
+
+###############################################################
+## Automatically Install missing packages and Load Libraries ##
+###############################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("purrr", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("cowplot", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(knitr)
+library(purrr)
+library(rpart)
+library(cowplot) 
+
+######################################################################################################################
+##                                                                                                                  ##
+## The data set is directly downloaded from my github repository. You can find the original data set in Kaggel.      ##
+## However, I decided to upload the data set to github since the graders will need to create an account in Kaggel   ##
+## to download directly from there. By doing this I make sure the graders will access the data set with no issues.  ##
+##                                                                                                                  ##
+## The original link to the data set in Kaggel is:                                                                   ## 
+##                                                                                                                  ##
+## https://www.kaggle.com/mohansacharya/graduate-admissions?select=Admission_Predict_Ver1.1.csv                     ##
+##                                                                                                                  ##
+######################################################################################################################
+
+
+url <- "https://raw.githubusercontent.com/josgor84/Graduate-Admissions-EDX/master/Admission_Predict_Ver1.1.csv"
+admissions <- read_csv(url)
+
+
+# Change col names to avoid issues
+
+colnames(admissions) <- c("Serial", "GRE_Score", "TOEFL_Score", "University_Rating", "SOP", "LOR", "CGPA", "Research", "Chance_Admit")
+
+########################################################
+# Description of columns (parameters) in the Data set ##
+########################################################
+
+####################################################################################################
+## Serial No: A consecutive number assigned to each candidate                                     ##
+## GRE Score: GRE Scores ( out of 340 )                                                           ## 
+## TOEFL Score: TOEFL Scores ( out of 120 )                                                       ##
+## University Rating: University Rating ( out of 5 ), 5 is consider a Top university              ##
+## SOP: Statement of Purpose  ( out of 5 )                                                        ##
+## LOR: Letter of Recommendation ( out of 5 )                                                     ##
+## CGPA: Undergraduate GPA ( out of 10 )                                                          ##
+## Research: Research Experience ( either 0 or 1 )                                                ##
+## Chance of Admit: Each candidate gave its own answer in the poll, either admitted or not        ##
+####################################################################################################
+
+head(admissions)
+
+#######################################################################################################
+##                                                                                                   ##
+## The information in the column Chance of Admit represents the own candidate estimation or chance   ##
+## to be admitted to the university. The data set does not contain information of actual admissions.  ##
+## Thus, for the purpose of this project I decided to consider a cutoff of chance of Admit equal to  ##
+## the average of the Chance of Admit column. A result below the average means not admitted and a     ##
+## results above the average means Admitted. For simplicity of the analysis, I decided to remove     ##
+## the column Chance of Admit, so it would not be consider as a predictor, and, assigned 1 to        ##
+## admitted students and 0 to not admitted.                                                          ##
+##                                                                                                   ##
+#######################################################################################################
+
+####################################
+##   Cutoff of Chance of Admit    ##
+####################################
+
+mean(admissions$Chance_Admit)
+
+#################################################################
+##  Produce admitted and not admitted, 1 and 0, respectively   ##
+#################################################################
+
+admitted <- ifelse(admissions$Chance_Admit >= 0.72, 1, 0)
+admissions <- mutate(admissions, admitted)
+
+########################################################################
+##  Remove column Chance of Admit  to avoid using it as a predictor   ##
+########################################################################
+admissions <- admissions[-9]
+head(admissions)
+
+#########################################################
+## Validation set will be 10% of the original Dataset  ##
+#########################################################
+
+
+set.seed(1, sample.kind="Rounding") ## if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = admissions$admitted, times = 1, p = 0.1, list = FALSE)
+admit <- admissions[-test_index,]
+validation <- admissions[test_index,]
+
+############################################################################################################
+## The admit data set will be the one used for training and the validation data set will be used to test  ##
+## the best model and determine its accuracy in the final step                                            ##
+############################################################################################################ 
+
+###############################################################################
+## Calculate the proportion of admitted students in the validation data set  ##
+###############################################################################
+
+mean(validation$admitted)
+
+#############################################################################################
+##  Create an additional partition for train_set and test_set (10% of the data)            ##
+##  This step will allow to test different model, select the best one based on accuracy.   ##
+##  Then, the best model will be test on the validation data set to evaluate its accuracy  ##
+#############################################################################################
+
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = admit$admitted, times = 1, p = 0.1, list = FALSE)
+train_set <- admissions[-test_index,]
+test_set <- admissions[test_index,]
+
+#################################################
+## Data exploration Section and Data Cleaning  ##
+#################################################
+
+## Analize the dimension of train_set and test_set and validation set
+head(train_set)
+dim(train_set)
+dim(test_set)
+
+## Calculate the proportion of admitted students in the train_set and test_set ##
+
+mean(test_set$admitted)
+mean(train_set$admitted)
+
+
+## Evaluate if there are NA values in the train_set and test_set ##
+
+mean(is.na(train_set))
+mean(is.na(test_set))
+
+## Create a histogram with the train_set to analize the behavior of GRE, TOELF, SOP. LOR, and CGPA parameter ##
+
+# Histogram of GRE Score: The results shows a bimodal distribution #
+
+mean_GRE_train <- mean(train_set$GRE_Score)
+mean_GRE_train
+hist(train_set$GRE_Score, col = "lightcyan3" , border = "black", main = paste("Histogram of GRE Results"), xlab = "GRE Score")
+abline(v=mean(train_set$GRE_Score),col="red",lwd=2)
+
+# Histogram of TOEFL Score: The results shows a bi modal distribution #
+
+mean_TOEFL_train <- mean(train_set$TOEFL_Score)
+mean_TOEFL_train
+hist(train_set$TOEFL_Score, col = "lightcyan3" , border = "black", main = paste("Histogram of TOELF Results"), xlab = "TOELF Score")
+abline(v=mean(train_set$TOEFL_Score),col="red",lwd=2)
+
+
+# Histogram of SOP : The results seems to be skewed #
+
+mean_SOP_train <- mean(train_set$SOP)
+mean_SOP_train
+hist(train_set$SOP, col = "lightcyan3" , border = "black", main = paste("Histogram of SOP Results"), xlab = "SOP Scale")
+abline(v=mean(train_set$SOP),col="red",lwd=2)
+
+# Histogram of LOR : The results shows a bi modal distribution #
+
+mean_LOR_train <- mean(train_set$LOR)
+mean_LOR_train
+hist(train_set$LOR, col = "lightcyan3" , border = "black", main = paste("Histogram of LOR Results"), xlab = "LOR Scale")
+abline(v=mean(train_set$LOR),col="red",lwd=2)
+
+# Histogram of CGPA : The results seems to be skewed #
+
+mean_CGPA_train <- mean(train_set$CGPA)
+mean_CGPA_train
+hist(train_set$CGPA, col = "lightcyan3" , border = "black", main = paste("Histogram of CGPA Results"), xlab = "CGPA Score")
+abline(v=mean(train_set$CGPA),col="red",lwd=2)
+
+
+## Evaluate the GRE, TOELF and CGPA based on the rating of the university applied ##
+
+
+## Boxplot of GRE score respect to University rating: GRE scores increases as we move up to top universities    
+## which was expected. However, there are some outliners with low GRE Scores applied to Top universities (4,5)  
+
+train_set %>% group_by(University_Rating) %>% ggplot(aes(University_Rating, GRE_Score, group= University_Rating))+ geom_boxplot(color = "black", fill = "lightcyan3", outlier.color = "slateblue4")
+
+## Boxplot of TOEFL score respect to University rating: Median and interquartile increases with University rating. But,     
+## is interesting to observe some applicants (outliners) with higher scores applying to bottom ranking universities, where  
+## the interquartile is narrow compare to the others                                                                                                        ##
+
+train_set %>% group_by(University_Rating) %>% ggplot(aes(University_Rating, TOEFL_Score, group= University_Rating)) + geom_boxplot(color = "black", fill = "lightcyan3", outlier.color = "slateblue4")
+
+## Boxplot of CGPA score respect to University rating: Median and interquartile ranges are kind of uniform along the 
+## University rating. Few outliners with lower CGPA applying to top universities and two higher CGPA (outliners) 
+## applying to lower ranking universities
+
+train_set %>% group_by(University_Rating) %>% ggplot(aes(University_Rating, CGPA, group= University_Rating)) + geom_boxplot(color = "black", fill = "lightcyan3", outlier.color = "slateblue4")
+
+#####################################################################################################
+## From the previous analysis, one can believe that GRE, TOEFL, and CGPA have a strong correlation ##
+## to the population admitted (Admission rate). Thus, we can evaluate the correlation for each one ##
+#####################################################################################################
+
+## Correlation for GRE Scores and Admitted ##
+
+cor_GRE_admit <- cor(train_set$GRE_Score, train_set$admitted)
+
+cor_admit_results <- tibble(Correlation = "GRE to Admitted", Result = cor_GRE_admit)
+kable(cor_admit_results)
+
+
+## Correlation for TOEFL Scores and Admitted ##
+
+cor_TOEFL_admit <- cor(train_set$TOEFL_Score, train_set$admitted)
+
+cor_admit_results <- bind_rows(cor_admit_results,
+                          tibble(Correlation=" TOELF to Admitted",
+                                 Result = cor_TOEFL_admit ))
+
+kable(cor_admit_results[2, ])
+
+## Correlation for CGPA Scores and Admitted ##
+
+cor_CGPA_admit <- cor(train_set$CGPA, train_set$admitted)
+
+cor_admit_results <- bind_rows(cor_admit_results,
+                               tibble(Correlation="CGPA to Admitted",
+                                      Result = cor_CGPA_admit ))
+
+kable(cor_admit_results[3, ])
+
+kable(cor_admit_results)
+
+
+## The results support the previous statement of a strong correlation between GRE,TOELF and CGPA ##
+## With Admission rate                                                                           ##
+
+## How about the other parameters such as SOP,LOR and Research ##
+
+cor_SOP_admit <- cor(train_set$SOP, train_set$admitted)
+
+cor_admit_results <- bind_rows(cor_admit_results,
+                               tibble(Correlation ="SOP to Admitted",
+                                      Result = cor_SOP_admit ))
+
+kable(cor_admit_results[4, ])
+
+
+cor_LOR_admit <- cor(train_set$LOR, train_set$admitted)
+
+cor_admit_results <- bind_rows(cor_admit_results,
+                               tibble(Correlation ="LOR to Admitted",
+                                      Result = cor_LOR_admit ))
+
+kable(cor_admit_results[5, ])
+
+
+cor_Research_admit <- cor(train_set$Research, train_set$admitted)
+
+cor_admit_results <- bind_rows(cor_admit_results,
+                               tibble(Correlation ="Research to Admitted",
+                                      Result = cor_Research_admit ))
+
+kable(cor_admit_results[6, ])
+
+
+## The results suggest there is a still correlation, but weaker compared to GRE,TOELF and CGPA.   ##
+## below the summary of the correlation results                                                   ## 
+
+kable(cor_admit_results)
+
+
+#######################################################################################################
+## Now, one can analyze the relationship between predictors by creating plots and calculating the    ##
+## correlation coefficients to have a better understanding of how they are related to each other     ## 
+#######################################################################################################
+
+## PLOTS ##
+
+GRE_TOELF <- train_set %>% group_by(GRE_Score) %>% ggplot(aes(GRE_Score,TOEFL_Score)) + geom_smooth()
+
+GRE_CGPA <- train_set %>% group_by(GRE_Score) %>% ggplot(aes(GRE_Score, CGPA)) + geom_smooth()
+
+GRE_SOP <- train_set %>% group_by(GRE_Score) %>% ggplot(aes(GRE_Score, SOP)) + geom_smooth()
+
+GRE_LOR <- train_set %>% group_by(GRE_Score) %>% ggplot(aes(GRE_Score, LOR)) + geom_smooth()
+
+TOEFL_SOP  <- train_set %>% group_by(TOEFL_Score) %>% ggplot(aes(TOEFL_Score, SOP)) + geom_smooth()
+
+TOEFL_LOR <- train_set %>% group_by(TOEFL_Score) %>% ggplot(aes(TOEFL_Score, LOR)) + geom_smooth()
+
+TOEFL_CGPA <- train_set %>% group_by(TOEFL_Score) %>% ggplot(aes(TOEFL_Score, CGPA)) + geom_smooth()
+
+CGPA_SOP <- train_set %>% group_by(CGPA) %>% ggplot(aes(CGPA, SOP)) + geom_smooth()
+
+CGPA_LOR <- train_set %>% group_by(CGPA) %>% ggplot(aes(CGPA, LOR)) + geom_smooth()
+
+plot_grid(GRE_TOELF, GRE_CGPA, GRE_SOP, GRE_LOR,TOEFL_CGPA,TOEFL_SOP, TOEFL_LOR, CGPA_LOR, CGPA_SOP)
+
+
+## Correlation ##
+
+## GRE and TOELF ##
+
+cor_GRE_TOELF <- cor(train_set$GRE_Score, train_set$TOEFL_Score)
+
+cor_summary_results <- tibble(Correlation = "GRE and TOELF", Result = cor_GRE_TOELF)
+
+kable(cor_summary_results)
+
+
+## GRE and CGPA ##
+
+cor_GRE_CGPA <- cor(train_set$GRE_Score, train_set$CGPA)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                             tibble(Correlation="GRE and CGPA",
+                                    Result = cor_GRE_CGPA  ))
+kable(cor_summary_results[2, ])
+
+## GRE and SOP ##
+
+cor_GRE_SOP <- cor(train_set$GRE_Score,train_set$SOP)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="GRE and SOP",
+                                       Result = cor_GRE_SOP  ))
+kable(cor_summary_results[3, ])
+
+
+## GRE and LOR ##
+
+cor_GRE_LOR <- cor(train_set$GRE_Score,train_set$LOR)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="GRE and LOR",
+                                       Result = cor_GRE_LOR  ))
+kable(cor_summary_results[4, ])
+
+
+## TOEFL and SOP ##
+
+cor_TOELF_SOP <- cor(train_set$TOEFL_Score, train_set$SOP)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="TOELF and SOP",
+                                       Result = cor_TOELF_SOP  ))
+kable(cor_summary_results[5, ])
+
+
+## TOEFL and LOR ##
+
+cor_TOELF_LOR <- cor(train_set$TOEFL_Score, train_set$LOR)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="TOELF and LOR",
+                                       Result = cor_TOELF_LOR  ))
+kable(cor_summary_results[6, ])
+
+## TOEFL and CGPA ##
+
+cor_TOELF_CGPA <- cor(train_set$TOEFL_Score, train_set$CGPA)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="TOELF and CGPA",
+                                       Result = cor_TOELF_CGPA  ))
+kable(cor_summary_results[7, ])
+
+
+## CGPA and SOP ##
+
+cor_CGPA_SOP <- cor(train_set$TOEFL_Score, train_set$CGPA)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="CGPA and SOP",
+                                       Result = cor_CGPA_SOP  ))
+kable(cor_summary_results[8, ])
+
+## CGPA and LOR ##
+
+cor_CGPA_LOR <- cor(train_set$TOEFL_Score, train_set$LOR)
+
+cor_summary_results <- bind_rows(cor_summary_results,
+                                tibble(Correlation="CGPA and LOR",
+                                       Result = cor_CGPA_LOR  ))
+kable(cor_summary_results[9, ])
+
+kable(cor_summary_results)
+
+###################################################################################################################
+## From the above results is clear that some variables are highly correlated on to each other more than others,  ##
+## such as, GRE, TOELF, and, CGPA. Thus, they may serve as powerful predictors to model admission predictions    ##
+###################################################################################################################
+
+## Next step will evaluate some predicting methods using the training data ##
+
+
+###################################################################################################################
+###################################################################################################################
+
+##########################
+# METHODS OF PREDICTION ##
+##########################
+
+## Once we explore the data, we can start running some models to evaluate predictions. The model with the highest ##
+## Overall accuracy will be selected for testing on the validation data set. Nevertheless, it is imporant to      ##
+## mention that all the models used in the project will be evaluated on the test_set for comparison purposes     ##
+
+####################
+# Baseline Model  ##
+####################
+
+#  Baseline Model. simply guessing the admitted by randomly sampling and ignoring predictors
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+y_hat <- sample(c(0, 1), length(test_index), replace = TRUE)
+
+## Overall accuracy of baseline Model ##
+
+accuracy_baseline_model <- mean(y_hat == test_set)
+
+accuracy_baseline_model
+
+# The result is not good. Actually, it is very low. just about 13% of chances guessing the right answer. ##
+
+###################################
+##   MODEL_GRE GRE As predictor  ##
+###################################
+
+
+## MODEL_GRE. From the exploration of the original data we could observe that GRE seems to have a high correlation  ##
+## with the admitted population (Admission rate). This Model will use only GRE as predictor. Now, since GRE is    ##
+## not categorical, we need a cutoff.For this project I suggested as a cutoff the average of the GRE minus two    ##
+## standard deviations using only the GRE scores of those who were admitted. Thus, I need to filter a table with  ##
+## just GRE scores of the admitted population. This criteria was selected by me, arbitrary.                       ##
+
+
+admitted_pop <- test_set %>% filter(admitted == 1)
+
+## Table admitted_pop only includes the values of those admitted.
+
+# Cutoff GRE
+
+cutoff_GRE_admitted <- mean(admitted_pop$GRE_Score)-2*sd(admitted_pop$GRE_Score)
+cutoff_GRE_admitted 
+
+## Run the model with GRE as predictor
+
+Model_GRE <- ifelse(test_set$GRE_Score >= cutoff_GRE_admitted, 1, 0) 
+Model_GRE_accuracy <- mean(Model_GRE == test_set$admitted)
+
+## The results shows a significant improvement compare to the baseline model. Nevertheless, there is still room
+## for improvement, evaluating other predictors with high correlation and a mixture of them
+
+#####################################
+## MODEL_TOELF Toelf As predictor  ##
+#####################################
+
+## When exploring the data TOEFL correlation was not at high as GRE, or CPGA. Still, it was the third higher among all  ##
+## parameters, so Let's see if the accuracy is lower as we may expect compare to GRE or not. here I used the same       ##
+## procedure used to establish the cutoff in the GRE model                                                              ##
+
+# Cutoff_TOEFL
+
+cutoff_TOEFL_admitted <- mean(admitted_pop$TOEFL_Score) - 2*sd(admitted_pop$TOEFL_Score)
+cutoff_TOEFL_admitted
+
+## Run the model with TOELF as predictor
+
+Model_TOELF <- ifelse(test_set$TOEFL_Score >= cutoff_TOEFL_admitted, 1, 0) 
+Model_TOELF_accuracy <- mean(Model_TOELF == test_set$admitted)
+
+## The overall accuracy of the model was a surprise (about 84%), considering that TOELF had a lower correlation compare to GRE ##
+
+## Let큦 evaluate the predictor with the highest correlation to the admitted population , CGPA ##
+
+############################################
+## MODEL_CPGA Undergrad GPA As predictor  ##
+############################################
+
+## Here, I continue to apply the same process to determine the cutoff and, since CGPA has the highest correlation, one
+## can expect a good accuracy and maybe higher than the previous model
+
+cutoff_CGPA_admitted <- mean(admitted_pop$CGPA)- 2*sd(admitted_pop$CGPA)
+cutoff_CGPA_admitted
+
+Model_CGPA <- ifelse(test_set$CGPA >= cutoff_CGPA_admitted, 1, 0) 
+Model_CGPA_accuracy <- mean(Model_CGPA == test_set$admitted)
+
+# This is a slightly improvement compare to the GRE model. But, surprising it was just below the TOELF model #
+
+# So far, we evaluate the three predictors individually. Now let큦 evaluate all of them together (TOEFL, GRE, CGPA).   #
+# One can expect  better results since all of them showed a good correlation with the admitted population. The Cutoff  #
+# will continue to be the same proposed in the previous models                                                         #
+
+############################################
+## MODEL_GRE_TOEFL_CGPA three predictors  ##
+############################################
+
+Model_GRE_TOEFL_CGPA <- ifelse(test_set$GRE_Score >= cutoff_GRE_admitted &
+                                 test_set$TOEFL_Score  >= cutoff_TOEFL_admitted &
+                                 test_set$CGPA>= cutoff_CGPA_admitted
+                                   , 1, 0) 
+Model_GRE_TOEFL_CGPA_accuracy <- mean(Model_GRE_TOEFL_CGPA == test_set$admitted)
+
+# The mix model improved the overall accuracy compare to models using individual predictor ##
+
+# Below, the summary of the accuracies of the methods evaluated so far # 
+
+Methods_summary <- tibble(MODEL = "Baseline", Accuracy = accuracy_baseline_model)
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_GRE", Accuracy = Model_GRE_accuracy  ))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_TOELF", Accuracy = Model_TOELF_accuracy  ))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_CGPA", Accuracy = Model_CGPA_accuracy  ))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_GRE_TOEFL_CGPA", Accuracy = Model_GRE_TOEFL_CGPA_accuracy  ))
+
+kable(Methods_summary)
+
+## Now, let's analize the result of confusion matrix for each model proposed to study sensitivity and specificity ##
+
+## Sensitivity: Ability of an algorithm to predict a positive outcome when the actual outcome is positive #
+## Specificity: Ability of an algorithm to not predict a positive outcome when the actual outcome is not positive #
+
+# Confusion Matrix GRE
+
+confusionMatrix(data = factor(Model_GRE), reference = factor(test_set$admitted))
+
+# Confusion Matrix TOELF
+
+confusionMatrix(data = factor(Model_TOELF), reference = factor(test_set$admitted))
+
+# Confusion Matrix CGPA
+
+confusionMatrix(data = factor(Model_CGPA), reference = factor(test_set$admitted))
+
+# Confusion Matrix Mix Model
+
+confusionMatrix(data = factor(Model_GRE_TOEFL_CGPA), reference = factor(test_set$admitted))
+
+## From the Results, it is possible to observe that the highest accuracy (0.8889) comes from the mix model as well as the  
+## highest sensitivity (0.8636). However, highest specificity is higher in the models with single predictors. 
+
+# Let큦 evaluate F1 scores
+
+F_meas(data = factor(Model_GRE), reference = factor(test_set$admitted))
+
+F_meas(data = factor(Model_TOELF), reference = factor(test_set$admitted))
+
+F_meas(data = factor(Model_CGPA), reference = factor(test_set$admitted))
+
+F_meas(data = factor(Model_GRE_TOEFL_CGPA), reference = factor(test_set$admitted))
+
+## The F1 score is maximum for the mix model. This model (Mix) performed very good. Still, we can evaluate
+## other models to study if we can increase the overall accuracy
+
+#################################################
+##  METHOD_QDA QUADRATIC DISCRIMINANT ANALYSIS ##
+#################################################
+
+# From this point I will use the caret package to have a cleaner code while evaluating the models. Also, #
+# I will used the predictors with highest correlation (GRE,TOELF, and CGPA).                             #
+ 
+# GRE Score as the unique predictor
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_GRE <- train(factor(admitted) ~ GRE_Score, method = "qda", data = train_set)
+QDA_GRE_Admitted <- predict(Model_QDA_GRE, test_set)
+QDA_GRE_Accuracy <- mean(QDA_GRE_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (QDA_GRE_Admitted), reference = factor(test_set$admitted))
+
+
+# TOEFL Score as the unique predictor
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_TOELF <- train(factor(admitted) ~ TOEFL_Score , method = "qda", data = train_set)
+QDA_TOELF_Admitted <- predict(Model_QDA_TOELF, test_set)
+QDA_TOELF_Accuracy <- mean(QDA_TOELF_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (QDA_TOELF_Admitted), reference = factor(test_set$admitted))
+
+# CGPA Score as the unique predictor
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_CGPA <- train(factor(admitted) ~ CGPA , method = "qda", data = train_set)
+QDA_CGPA_Admitted <- predict(Model_QDA_CGPA, test_set)
+QDA_CGPA_Accuracy <- mean(QDA_CGPA_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (QDA_CGPA_Admitted), reference = factor(test_set$admitted))
+
+# Surprisingly, TOELF continue to show the highest accuracy among the three best predictors. Let큦 evaluate it with the 
+# validation set quickly check how it performs and if there is an over fitting or not.
+
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_TOELF <- train(factor(admitted) ~ TOEFL_Score , method = "qda", data = admit)
+QDA_TOELF_Admitted <- predict(Model_QDA_TOELF, validation)
+mean(QDA_TOELF_Admitted == factor(validation$admitted))
+confusionMatrix(data = (QDA_TOELF_Admitted), reference = factor(validation$admitted))
+
+# The result suggest it may be an over fitting, since the overall accuracy drop from 0.956 to 0.84. # 
+# Now, Let큦 see what happen if we use the three predictors together (GRE, TOELF, CGPA)
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_GRE_TOELF_CGPA <- train(factor(admitted) ~ GRE_Score + CGPA + TOEFL_Score, method = "qda", data = train_set)
+QDA_GRE_TOELF_CGPA_Admitted<- predict(Model_QDA_GRE_TOELF_CGPA, test_set)
+QDA_GRE_TOELF_CGPA_Accuracy <- mean(QDA_GRE_TOELF_CGPA_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (QDA_GRE_TOELF_CGPA_Admitted), reference = factor(test_set$admitted))
+
+# The overall accuracy is fairly good, but, QDA_TOELF still better. Let큦 see what happen if we consider all the predictors
+# the QDA model
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_QDA_ALL <- train(factor(admitted) ~ GRE_Score + CGPA + TOEFL_Score + SOP + LOR + Research + University_Rating, method = "qda", data = train_set)
+QDA_ALL_Admitted<- predict(Model_QDA_ALL, test_set)
+QDA_ALL_Accuracy <- mean(QDA_ALL_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (QDA_ALL_Admitted), reference = factor(test_set$admitted))
+
+# The overall accuracy drop when we consider all the predictors in the model, which suggest that some parameters
+# may affect the model큦 capability to predict. Thus, for future models i will consider only the three parameters
+# whit highest correlation (GRE, TOELF, CGPA)
+
+#################################################
+##  METHOD_LDA LINEAR DISCRIMINANT ANALYSIS    ##
+#################################################
+
+## LDA with TOEFL, GRE, CGPA as predictors.
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_LDA_GRE_TOELF_CGPA <- train(factor(admitted) ~ GRE_Score + CGPA + TOEFL_Score, method = "lda", data = train_set)
+LDA_GRE_TOELF_CGPA_Admitted <- predict(Model_LDA_GRE_TOELF_CGPA, test_set)
+LDA_GRE_TOELF_CGPA_Accuracy <- mean(LDA_GRE_TOELF_CGPA_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (LDA_GRE_TOELF_CGPA_Admitted), reference = factor(test_set$admitted))
+
+## There was no improvement compare to QDA. Actually, both models yields to the same overall accuracy (0.8889)
+
+##########################################
+##  METHOD_GLM GENERALIZED LINEAR MODEL ##
+##########################################
+
+## GLM with TOEFL, GRE, CGPA as predictors.
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_GLM_GRE_TOELF_CGPA <- train(factor(admitted) ~ GRE_Score + CGPA + TOEFL_Score, method = "glm", data = train_set)
+GLM_GRE_TOELF_CGPA_Admitted <- predict(Model_GLM_GRE_TOELF_CGPA, test_set)
+GLM_GRE_TOELF_CGPA_Accuracy <- mean(GLM_GRE_TOELF_CGPA_Admitted == factor(test_set$admitted))
+confusionMatrix(data = (GLM_GRE_TOELF_CGPA_Admitted), reference = factor(test_set$admitted))
+
+## The results was very similar compare to the two previous models. there was no improvement. Let큦 evaluate
+## other model such as kNN, kNN and Cross Validation, Classification (Decision) tree, and,  random forests to check for
+## potential improvements. 
+
+
+######################################
+##  METHOD_KNN K- nearest neighbor  ##
+######################################
+
+## KNN with TOEFL, GRE, CGPA as predictors.
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Model_KNN_GRE_TOELF_CGPA <- train(factor(admitted) ~ GRE_Score + CGPA + TOEFL_Score, method = "knn", data = train_set, tuneGrid = data.frame(k = seq(5, 20, 1)))
+KNN_GRE_TOELF_CGPA_Accuracy <- confusionMatrix(predict(Model_KNN_GRE_TOELF_CGPA , test_set), as_factor(test_set$admitted))$overall["Accuracy"]
+KNN_GRE_TOELF_CGPA_Accuracy
+plot(Model_KNN_GRE_TOELF_CGPA)
+best_k <- Model_KNN_GRE_TOELF_CGPA$bestTune
+best_k
+
+# The result indicates a good accuracy. but, not better than the models previously proposed 
+
+
+############################################
+##  METHOD_KNN_CV Knn + Cross-Validation  ##
+############################################
+
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+control <- trainControl(method = "cv", number = 5, p = .1)
+Model_KNN_CV_GRE_TOELF_CGPA <- train(factor(admitted) ~ GRE_Score + TOEFL_Score + CGPA , method = "knn", 
+                    data = train_set,
+                    tuneGrid = data.frame(k = seq(5, 20, 1)),
+                    trControl = control)
+KNN_CV_GRE_TOELF_CGPA_Accuracy <- confusionMatrix(predict(Model_KNN_CV_GRE_TOELF_CGPA, test_set), as_factor(test_set$admitted))$overall["Accuracy"]
+KNN_CV_GRE_TOELF_CGPA_Accuracy
+plot(Model_KNN_CV_GRE_TOELF_CGPA)
+best_k <- Model_KNN_CV_GRE_TOELF_CGPA$bestTune
+best_k
+
+
+# the accuracy with Knn - cross-validation shows an improvement compared to Knn.
+
+
+
+#################################################
+##  METHOD_TREE Classification(Decision) Tree  ##
+#################################################
+
+
+# Perhaps this tree may provide a insight for potential graduate students to determine their possibilities
+# of getting accepted to a particular university. Let's see
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Method_Tree_all <- train(factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "rpart", tuneGrid = data.frame(cp = seq(0.0, 0.001, len = 25)), data = train_set)
+Method_Tree_all
+best_cp <- Method_Tree_all$bestTune
+best_cp
+Method_tree_all_accuracy <- confusionMatrix(predict(Method_Tree_all, test_set), as_factor(test_set$admitted))$overall["Accuracy"]
+Method_tree_all_accuracy
+plot(Method_Tree_all$finalModel, margin = 0.04)
+text(Method_Tree_all$finalModel, cex = 0.5)
+
+
+# Although this model does not represent and improvement compared to previous models. it gives very 
+# insightful date to the applicants about where to apply and get accepted. Still, I did not group by university
+# rating, which should give a good idea to potential applicants if the trees for each one can be explore. this step
+# could be for future work.
+
+
+##############################
+##  METHOD_RF Random Forest ##
+##############################
+
+# For this model I will use all the parameters
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Method_rf_all <- train(as_factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "rf", data = train_set, tuneGrid = data.frame(mtry = seq(1, 7, 0.1)), ntree = 50)
+confusionMatrix(predict(Method_rf_all, test_set), as_factor(test_set$admitted))$overall["Accuracy"]
+plot(Method_rf_all)
+best_mtry <- Method_rf_all$bestTune
+best_mtry
+
+# Select the appropriate number of trees
+ntree <- seq(1, 800, 50)
+Method_rf_all <- sapply(ntree, function(n){
+  train(as_factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "rf", data = train_set, tuneGrid = data.frame(mtry = best_mtry), ntree = n)$results$Accuracy
+})
+qplot(ntree,Method_rf_all)
+best_tree <- ntree[which.max(Method_rf_all)]
+best_tree
+
+# Then, the final model will be with the best MTRY and best NTREE
+Method_rf_all <- train(as_factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "rf", data = train_set, tuneGrid = data.frame(mtry = best_mtry), ntree =best_tree)
+Method_rf_all_Accuracy <- confusionMatrix(predict(Method_rf_all, test_set), as_factor(test_set$admitted))$overall["Accuracy"]
+Method_rf_all_Accuracy
+varImp(Method_rf_all)
+
+# this model yields to a very good estimate, which converts it to a ideal candidate as a final model.
+
+# RESULTS - SUMMARY OF ACCURACIES ON TRAINED MODELS
+
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_QDA_GRE", Accuracy = QDA_GRE_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_QDA_TOELF", Accuracy = QDA_TOELF_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_QDA_CGPA", Accuracy = QDA_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_QDA_GRE+TOELF+CGPA", Accuracy = QDA_GRE_TOELF_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_QDA_ALL", Accuracy = QDA_ALL_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_LDA_GRE+TOELF+CGPA", Accuracy = LDA_GRE_TOELF_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_GLM_GRE+TOELF+CGPA", Accuracy = GLM_GRE_TOELF_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_KNN_GRE+TOELF+CGPA", Accuracy = KNN_GRE_TOELF_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_KNN_CV_GRE+TOELF+CGPA", Accuracy = KNN_CV_GRE_TOELF_CGPA_Accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_TREE_ALL", Accuracy = Method_tree_all_accuracy))
+Methods_summary <- bind_rows(Methods_summary, tibble(MODEL ="MODEL_RF_ALL", Accuracy = Method_rf_all_Accuracy))
+
+kable(Methods_summary)
+
+## * being All: using all predictors (GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research)
+## The best results were obtained with the models: MODEL_QDA_TOELF,MODEL_KNN_CV_GRE+TOELF+CGPA and MODEL_RF_ALL.
+## Also, it was very interesitng to notice that most of the other models yielded to an accurary of 0.0.889
+
+## The next step is to evaluate the best models generated on the training and test into the "Validation Dataset as a final step"
+
+
+#####################################
+## ANALYSIS ON VALIDATION DATA SET ##
+#####################################
+
+# MODEL_QDA_TOELF ON VALIDATION
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+VAL_QDA_TOEFL <- train(factor(admitted) ~ TOEFL_Score, method = "qda", data = admit)
+Admitted_QDA_TOEFL <- predict(VAL_QDA_TOEFL, validation)
+accuracy_QDA_TOEFL_validation <- mean(Admitted_QDA_TOEFL == factor(validation$admitted))
+accuracy_QDA_TOEFL_validation
+
+#The accuracy dropped notably.
+
+# MODEL_KNN_CV_GRE+TOELF+CGPA ON VALIDATION
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+control <- trainControl(method = "cv", number = 5, p = .1)
+VAl_KNN_CV <- train(factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "knn", 
+                    data = admit,
+                    tuneGrid = data.frame(k = best_k),
+                    trControl = control)
+accuracy_kNN_CV_validation <- confusionMatrix(predict(VAl_KNN_CV, validation), as_factor(validation$admitted))$overall["Accuracy"]
+accuracy_kNN_CV_validation
+
+# The accuracy decreased slightly, probably due to some minor over fitting.
+
+
+# MODEL_RF_ALL ON VALIDATION
+
+set.seed(1, sample.kind="Rounding") # if using a later version than R 3.5
+Val_rf_final <- train(as_factor(admitted) ~ GRE_Score + TOEFL_Score + University_Rating + SOP + LOR + CGPA + Research, method = "rf", data = admit, tuneGrid = data.frame(mtry = best_mtry), ntree = best_tree)
+accuracy_RF_validation <- confusionMatrix(predict(Val_rf_final, validation), as_factor(validation$admitted))$overall["Accuracy"]
+accuracy_RF_validation
+varImp(Val_rf_final)
+
+#The accuracy dropped notably.
+
+Methods_summary_Validation <- tibble(MODEL_VALIDATION = "QDA_TOEFL", Accuracy = accuracy_QDA_TOEFL_validation)
+Methods_summary_Validation <- bind_rows(Methods_summary_Validation, tibble(MODEL_VALIDATION ="MODEL_KNN_CV", Accuracy = accuracy_kNN_CV_validation))
+Methods_summary_Validation <- bind_rows(Methods_summary_Validation, tibble(MODEL_VALIDATION ="MODEL_RF_ALL", Accuracy = accuracy_RF_validation))
+
+kable(Methods_summary_Validation)
+
+
+####################
+## FINAL ANALYSIS ##
+####################
+
+# All three models experienced a reduction in their accuracy when evaluated in the validation set compared to
+# the values obtained with the train and test set. The later, could be due to the conditions I did assume for the models
+# when testing in the train and test set, that made it harder for them to yield to the correct answer and probably ended  
+# in an over fitting of the training data. On the other hand, another reason for the final results, could be that the
+# validation set by its own was not representative when compared to the set used during training because of the population
+# size. A larger population may lead to better results and tuning possibilities. 
+
+# Among the three best models, K-nearest neighbors was the most stable when comparing accuracy results during training 
+# and validation. It only experience a slightly reduction (2.27%), from 0.88 (training) to 0.86 (Validation). The other two
+# Models QDA_TOEFL and Random forest experienced of 11.57% and 9.67% respectively, and their final accuracy was 0.84 in
+# both cases, which indicates that the K-nearest neighbors was the best model in this project.
+
+
+#########################
+## NOTES TO THE GRADER ##
+#########################
+
+# When running the code you will notice warnings, which corresponds to the setting the seeds() in with the random sampler generator. but it does not 
+# affect the results. 
+
+
+
